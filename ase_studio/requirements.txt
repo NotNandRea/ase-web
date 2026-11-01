@@ -1,0 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Behnam Farnaghinejad <behnam.farnaghinejad@polito.it>
+# SPDX-License-Identifier: GPL-2.0-only
+# ASE Studio's HTTP backend uses only the Python standard library.
+# PyGObject, GTK 3, and WebKitGTK 4.1 are system packages and cannot be
+# installed reliably with pip. Run ./install.sh to install and verify them.
