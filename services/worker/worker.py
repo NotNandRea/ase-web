@@ -1,8 +1,4 @@
 """Worker takes a job from the queue, one at a time, and run it
-
-JUST FOR TESTING BEFORE IMPLEMENTING A REAL QUEUE IN POSTGRES, HERE I USE DIRECTORIES
-    /tmp/ase-queue/pending/<id>.json   jobs waiting to run (same content as job.json)
-    /tmp/ase-queue/done/<id>.json      their results (same content as result.json)
 """
 
 import json
@@ -10,7 +6,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 import boto3
 import os
@@ -23,8 +18,8 @@ RUN_JOB = Path(__file__).parent / "run_job.py"
 
 REQUESTS = Path(tempfile.gettempdir()) / "ase-requests" # job requests downloaded from S3
 
-TIMEOUT = 60   # maximum seconds to wait for a job to finish before killing it and returning an error
-WAKEUP_TIMEOUT = 60   # look at the queue at least this often, even if no producer signals
+TIMEOUT = int(os.environ.get("WORKER_JOB_TIMEOUT", "60"))   # maximum seconds to wait for a job to finish before killing it and returning an error
+WAKEUP_TIMEOUT = int(os.environ.get("WORKER_WAKEUP_TIMEOUT", "60"))   # look at the queue at least this often, even if no producer signals
 
 BUCKET = os.environ["S3_BUCKET"]
 
