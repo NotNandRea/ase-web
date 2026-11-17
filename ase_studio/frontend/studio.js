@@ -3896,7 +3896,6 @@ window.addEventListener("focus", synchronizeExternalSource);
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) synchronizeExternalSource();
 });
-setInterval(synchronizeExternalSource, 1000);
 
 loadStudioVersion();
 loadProjects().then(checkForUpdate);

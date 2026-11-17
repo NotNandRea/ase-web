@@ -21,8 +21,6 @@ from schemas import CreateProject, RenameProject, DeleteProject, DuplicateProjec
 from auth import current_user
 
 
-CHANNEL = "jobs" # the workers LISTEN on this channel
-
 app = FastAPI(title="ASE Web API")
 
 # --- MISCELLANEOUS STUFF ---
@@ -79,14 +77,36 @@ def rename_project(body: RenameProject, owner: uuid.UUID = Depends(current_user)
     return {"ok": True, "name": newName}
 
 @app.delete("/api/projects")
-def delete_project(owner: uuid.UUID = Depends(current_user)):
-    """ Deletes a project """
-    pass
+def delete_project(body: DeleteProject, owner: uuid.UUID = Depends(current_user)):
+    """Delete a project and all its files"""
+    if body.confirmation != body.name:
+        backend.fail("Project deletion was not confirmed.")
+    name = backend.validate_project_name(body.name)
+
+    # expire_on_commit=False: project.owner and project.id are accessible after commit
+    with Session(dao.engine, expire_on_commit=False) as session, session.begin():
+        project = dao.get_project(session, owner, name)
+        if project is None:
+            backend.fail("Project not found.", 404)
+        dao.delete_project(session, project)
+
+    # After the commit so even if s3 fails, the project is still deleted from the database
+    storage.delete_project(project)
+    return {"ok": True}
 
 @app.post("/api/projects/duplicate")
-def duplicate_project(owner: uuid.UUID = Depends(current_user)):
-    """ Duplicates a project """
-    pass
+def duplicate_project(body: DuplicateProject, owner: uuid.UUID = Depends(current_user)):
+    """Duplicate a project without its last run"""
+    new_name = backend.validate_project_name(body.newName)
+
+    with Session(dao.engine) as session, session.begin():
+        source = dao.get_project(session, owner, body.name)
+        if source is None:
+            backend.fail("Project not found.", 404)
+        copy = dao.create_project(session, owner, new_name)
+        storage.copy_project_files(source, copy)
+
+    return {"ok": True, "name": new_name}
 
 @app.get("/api/project")
 def get_project(name: str, owner: uuid.UUID = Depends(current_user)):
@@ -162,11 +182,11 @@ def get_pipeline(name: str, owner: uuid.UUID = Depends(current_user)):
     with Session(dao.engine) as session, session.begin():
         project = dao.get_project(session, owner, name)
         if project is None:
-            backend.fail("Project not found.")
+            backend.fail("Project not found.", 404)
         last_run = storage.read_last_run(project)
 
     if last_run is None:
-        backend.fail("No trace has been generated for this project.")
+        backend.fail("No trace has been generated for this project.", 404)
 
     return last_run["pipeline"]
 
@@ -179,7 +199,7 @@ def get_symbols(name: str, owner: uuid.UUID = Depends(current_user)):
     with Session(dao.engine) as session, session.begin():
         project = dao.get_project(session, owner, name)
         if project is None:
-            backend.fail("Project not found.")
+            backend.fail("Project not found.", 404)
         last_run = storage.read_last_run(project)
     
     if last_run is None:
@@ -195,14 +215,55 @@ def get_symbols(name: str, owner: uuid.UUID = Depends(current_user)):
 # --- JOBS STUFF ---
 
 @app.post("/api/run")
-def run_job(owner: uuid.UUID = Depends(current_user)):
-    """ Executes a job request """
-    pass
+def run_job(body: RunJob, owner: uuid.UUID = Depends(current_user)):
+    """Queue a simulation of a project"""
+    name = backend.validate_project_name(body.name)
+    job_id = uuid.uuid4()
+    request_key = storage.job_key(job_id, storage.REQUEST_FILE)
+
+    with Session(dao.engine) as session, session.begin():
+        project = dao.get_project(session, owner, name)
+        if project is None:
+            backend.fail("Project not found.", 404)
+        
+        dao.create_job(session, job_id, owner, "run", request_key, project.id)
+        storage.save_source(project, body.text, body.allowScaffoldEdit)
+
+        # What the worker needs to run the original backend
+        request = {
+            "name": name,
+            "text": body.text,
+            "config": storage.read_config(project),
+            "allowScaffoldEdit": body.allowScaffoldEdit,
+        }
+        storage.write_request(job_id, request)
+
+    return {"jobId": job_id}
 
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: uuid.UUID, owner: uuid.UUID = Depends(current_user)):
-    """ Retieves a job status and, if it is done, its results """
-    pass
+    """Return the state of a job and, when it is done, its result"""
+    
+    with Session(dao.engine) as session, session.begin():
+        job = dao.get_job(session, owner, job_id)
+        if job is None:
+            backend.fail("Job not found.", 404)
+        
+        status = job.status
+        result = None
+        
+        if status == "done":
+            result = storage.read_result(job)
+            if result is None:
+                backend.fail("The result of this job is no longer available.", 404)
+            
+            # The first time a successful run is read it becomes the project's last run
+            if job.kind == "run" and result.get("ok") and dao.claim_result(session, job):
+                project = dao.get_project_by_id(session, job.project)
+                if project is not None:
+                    storage.write_last_run(project, result)
+
+    return {"id": job_id, "status": status, "result": result}
 
 # --- SUBMISSIONS STUFF ---
 
