@@ -240,11 +240,30 @@ def run_job(body: RunJob, owner: uuid.UUID = Depends(current_user)):
 
     return {"jobId": job_id}
 
+@app.get("/api/jobs/active")
+def get_active_job(owner: uuid.UUID = Depends(current_user)):
+    """Return the user's pending or running job so the page can wait for it again after a reload"""
+    
+    with Session(dao.engine) as session, session.begin():
+        dao.fail_stale_jobs(session, owner)   # a job whose worker died is not active
+        job = dao.get_active_job(session, owner)
+        active = None
+        
+        if job is not None:
+            project_name = None
+            if job.project is not None:   # submissions have no project
+                project = dao.get_project_by_id(session, job.project)
+                project_name = project.name
+            active = {"id": job.id, "kind": job.kind, "project": project_name}
+
+    return {"job": active}
+
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: uuid.UUID, owner: uuid.UUID = Depends(current_user)):
     """Return the state of a job and, when it is done, its result"""
     
     with Session(dao.engine) as session, session.begin():
+        dao.fail_stale_jobs(session, owner)   # a job whose worker died must not be awaited forever
         job = dao.get_job(session, owner, job_id)
         if job is None:
             backend.fail("Job not found.", 404)

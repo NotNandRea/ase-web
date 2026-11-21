@@ -606,3 +606,7 @@ html[data-theme="dark"] .brand button,
 html[data-theme="dark"] .about-content #close-about { background: transparent; }
 html[data-theme="dark"] .about-content .logo-light { display: none; }
 html[data-theme="dark"] .about-content .logo-dark { display: block; }
+
+/* ASE Web: modal shown while a Run job is in progress */
+#run-dialog { width: min(470px, calc(100vw - 30px)); padding: 20px; }
+#run-dialog p { margin: 0; color: var(--ink); }

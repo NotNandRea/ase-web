@@ -250,6 +250,29 @@ async function api(url, options = {}) {
   return data;
 }
 
+// ASE Web: wait for a job to finish, polling its status every second
+async function waitForJob(jobId) {
+  while (true) {
+    const job = await api("/api/jobs/" + jobId);
+    if (job.status === "done") {
+      if (job.result.error) throw Error(job.result.error);
+      return job.result;
+    }
+    if (job.status === "failed") throw Error("The simulation was interrupted before finishing. Run it again.");
+
+    if (job.status === "running") {
+      $("#run-status").textContent = "Simulating…";
+    } else {
+      $("#run-status").textContent = "Waiting in queue…";
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+}
+
+// ASE Web: a running job cannot be stopped, so Esc must not close its modal
+$("#run-dialog").addEventListener("cancel", event => event.preventDefault());
+
 async function loadStudioVersion() {
   try {
     const health = await api("/api/health");
@@ -1694,7 +1717,7 @@ function resetPipelineViewport() {
   requestAnimationFrame(reset);
 }
 
-async function run(stepAfterRun = false) {
+async function run(stepAfterRun = false, resumeJobId = null) {  // ASE Web: resumeJobId = job to wait for again after a reload
   if (!current) return;
   const source = $("#body").value;
   const sourceIssues = validateProgramSource(source);
@@ -1722,13 +1745,30 @@ async function run(stepAfterRun = false) {
   lastAdvancedLog = lastNormalLog;
   updateLog();
   showTab("output");
+
+  // ASE Web: block the page with a modal and count the seconds until the job ends
+  const runStarted = Date.now();
+  $("#run-status").textContent = "Waiting in queue…";
+  $("#run-timer").textContent = "0 s";
+  $("#run-dialog").showModal();
+  const runTimer = setInterval(() => {
+    $("#run-timer").textContent = Math.floor((Date.now() - runStarted) / 1000) + " s";
+  }, 1000);
+
   try {
-    const result = await api("/api/run", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({name: current.name, text: source,
-        allowScaffoldEdit: scaffoldEditsAllowed()})
-    });
+    // ASE Web: the Run returns a job to wait for after a page reload the job already exists
+    let jobId = resumeJobId;
+    if (jobId === null) {
+      const response = await api("/api/run", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({name: current.name, text: source,
+          allowScaffoldEdit: scaffoldEditsAllowed()})
+      });
+      jobId = response.jobId;
+    }
+    const result = await waitForJob(jobId);
+    
     scaffoldEditAuthorized = false;
     savedSource = $("#body").value;
     sourceDirty = false;
@@ -1747,7 +1787,9 @@ async function run(stepAfterRun = false) {
     }
     updateLog();
     if (result.ok) {
-      const trace = await api("/api/pipeline?name=" + encodeURIComponent(current.name));
+
+      const trace = result.pipeline;  // ASE Web: the job result already contains it
+
       appendSimulationReports(trace);
       current.dataSymbols = trace.dataSymbols || [];
       current.initialMemory = trace.initialMemory || {};
@@ -1783,6 +1825,10 @@ async function run(stepAfterRun = false) {
     lastAdvancedLog = lastNormalLog;
     updateLog();
   } finally {
+
+    clearInterval(runTimer);  // ASE Web: stop the clock and close the modal
+    $("#run-dialog").close();
+
     $("#run").disabled = false;
     $("#submit").disabled = false;
     $("#reset").disabled = false;
@@ -3897,5 +3943,28 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) synchronizeExternalSource();
 });
 
+
+// ASE Web: after a page reload, wait again for the Run the user had started
+async function resumeActiveJob() {
+  let active;
+  try {
+    active = await api("/api/jobs/active");
+  } catch (_error) {
+    return;   // without an answer there is nothing to resume
+  }
+  const job = active.job;
+  if (job === null) {
+    return;   // no job in progress
+  }
+  if (job.kind !== "run") {
+    return;   // only a Run can be resumed in the editor
+  }
+  const opened = await openProject(job.project);
+  if (opened) {
+    await run(false, job.id);
+  }
+}
+
+
 loadStudioVersion();
-loadProjects().then(checkForUpdate);
+loadProjects().then(checkForUpdate).then(resumeActiveJob);

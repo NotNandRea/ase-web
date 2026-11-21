@@ -45,6 +45,10 @@
   <small>© Politecnico di Torino 2026</small>
 </div></dialog>
 <dialog id="message-dialog"><form id="message-form"><h2 id="message-title">ASE Studio</h2><p id="message-text"></p><label id="message-input-wrap" hidden><span id="message-input-label"></span><input id="message-input" type="text" autocomplete="off"></label><div class="dialog-actions"><button type="button" id="message-cancel">Cancel</button><button type="button" id="message-alternate">Discard</button><button type="submit" id="message-confirm" class="primary">OK</button></div></form></dialog>
+
+<!-- ASE Web: modal shown while a Run job is in progress -->
+<dialog id="run-dialog"><p><span id="run-status">Waiting in queue…</span> <span id="run-timer">0 s</span></p></dialog>
+
 <dialog id="submission-dialog"><form id="submission-form">
   <h2>Prepare submission</h2>
   <p>Choose the ASE projects and optional supporting files to include in one ZIP archive.</p>
